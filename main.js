@@ -1,6 +1,6 @@
 // INIT
 import vkbeautify from "./node_modules/vkbeautify/index.js";
-import correlationEngine from "./correlationEngine.js";
+import { correlationEngine, organizeMap } from "./correlationEngine.js";
 
 function scrubTags(str) {
   if (str === null || str === "") return false;
@@ -32,28 +32,80 @@ let ssmlDoc = parser.parseFromString(
   "text/xml"
 );
 // READOUT shows how SSML doc will serialize
-let ssmlDocOutput = serializer.serializeToString(ssmlDoc);
-let beautifiedXML = vkbeautify.xml(ssmlDocOutput);
-outputElt.innerText = ssmlDocOutput || beautifiedXML;
-
+function printXMLString() {
+  let ssmlDocOutput = serializer.serializeToString(ssmlDoc);
+  let beautifiedXML = vkbeautify.xml(ssmlDocOutput);
+  outputElt.innerText = ssmlDocOutput || beautifiedXML;
+}
+printXMLString();
 console.dir(ssmlDoc);
 
-function transpileTextMutation() {
-  const map = correlationEngine(textElt.innerText, ssmlDoc.firstElementChild);
-  console.log(map);
-}
+// Can we successfully map between the de-tagged user text and the XML tree ?
+let logs = true;
+let mapState
 
-transpileTextMutation();
+textElt.addEventListener("click", (e) => {
+  const selectableTextIdx = getSelectableTextIdx();
+  getTextNodeInXMLDoc(textElt.innerText, selectableTextIdx);
+});
+// ***************************
+function getSelectableTextIdx() {
+  const sel = window.getSelection();
+  const { selectableTextIdx } = correlationEngine(textElt.innerText, textElt, {
+    tnode: sel.anchorNode,
+    idx: sel.anchorOffset,
+  });
+  return selectableTextIdx;
+} // ************************
+
+// ****************************
+function getTextNodeInXMLDoc(selectableText, indexInText) {
+  const { correlationMap } = correlationEngine(
+    selectableText,
+    ssmlDoc.firstElementChild
+  );
+  const tagNodeInDoc = correlationMap[indexInText];
+  logs &&
+    console.dirxml({
+      tag: tagNodeInDoc.tnode.parentElement,
+      value: tagNodeInDoc.tnode.textContent,
+      node: tagNodeInDoc.tnode,
+    });
+  mapState = correlationMap
+  console.log(correlationMap)
+  console.log(organizeMap(correlationMap))
+  return tagNodeInDoc.tnode;
+} // ****************************
 
 function checkParity() {
-  const ssmlDocTextMap = correlationEngine(ssmlDoc.firstElementChild)
-  const userText = textElt.textContent
+  console.log(
+    "parity: " + (textElt.textContent === ssmlDoc.firstElementChild.textContent)
+  );
 }
-console.log(
-  "parity: " + (textElt.textContent === ssmlDoc.firstElementChild.textContent)
-);
-console.log("textElt.textContent", textElt.textContent);
-console.log(
-  "ssmlDoc.firstElementChild.textContent",
-  ssmlDoc.firstElementChild.textContent
-);
+
+// Can we map mutations of text between the de-tagged user text and the XML tree?
+
+function mutationCallback(mutationList, observer) {
+  mutationList.forEach((mutation) => {
+    switch (mutation.type) {
+      case "characterData":
+        const newValue = mutation.target.textContent;
+         const { oldValue } = mutation;
+        // const charDelt =
+        //   Math.max(newValue.length, oldValue.length) -
+        //   Math.min(newValue.length, oldValue.length);
+        const selectableTextIdx = getSelectableTextIdx();
+        const textNodeInXMLDoc = getTextNodeInXMLDoc(oldValue, selectableTextIdx);
+        console.log(textNodeInXMLDoc)
+        // textNodeInXMLDoc.textContent = newValue;
+        // printXMLString();
+        // checkParity();
+    }
+  });
+}
+const observer = new MutationObserver(mutationCallback);
+observer.observe(textElt, {
+  subtree: true,
+  characterData: true,
+  characterDataOldValue: true,
+});
