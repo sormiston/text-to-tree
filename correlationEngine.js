@@ -33,8 +33,7 @@ export function correlationEngine(referenceText, tree, editPoint = null) {
       if (localIdx >= 0) {
         fromIdx = localIdx + 1; // next tick's search starts only after point where this char was found
         if (
-          editPoint &&
-          editPoint.tnode === currTNode &&
+          editPoint &&    
           editPoint.idx === localIdx
         ) {
           returnData.selectableTextIdx = i;
@@ -77,8 +76,8 @@ export function organizeMap(correlationMap) {
   let currentVolume = [correlationMap[0]];
   let start = 0;
 
-  function finishVolume(entry, start, i, isLast = false) {
-    const rangeKey = `${start}-${i - 1}`;
+  function finishVolume(entry, i, isLast = false) {
+    const rangeKey = isLast ? `${start}-${i}` : `${start}-${i - 1}`;
     if (isLast) {
       currentVolume.push(entry);
     }
@@ -90,13 +89,60 @@ export function organizeMap(correlationMap) {
   }
   correlationMap.forEach((entry, i, arr) => {
     if (i === 0) return;
-    if (i === arr.length - 1) {
-      finishVolume(entry, start, i, true);
-    } else if (entry.tnode === arr[i - 1].tnode) {
+    if (entry === arr[arr.length - 1]) {
+      finishVolume(entry, i, true);
+    } else if (entry.tnode === currentVolume[currentVolume.length - 1].tnode) {
       currentVolume.push(entry);
     } else {
-      finishVolume(entry, start, i);
+      finishVolume(entry, i);
     }
   });
   return result;
+}
+
+export function getRangeMap(selectableText, tree) {
+  const { correlationMap } = correlationEngine(selectableText, tree);
+  checkMapFidelity(selectableText, correlationMap);
+  const organized = organizeMap(correlationMap);
+  Object.entries(organized).forEach(([k, v]) => {
+    organized[k] = v[0].tnode;
+  });
+  return organized;
+}
+
+export function getPartition(rangeMap, selectableTextIdx) {
+  const regex = /(?<start>\d*)-(?<end>\d*)/;
+  let result = {};
+  Object.keys(rangeMap).forEach((k) => {
+    const { start, end } = k.match(regex).groups;
+    if (selectableTextIdx >= start && selectableTextIdx <= end) {
+      result.partitionKey = k;
+      result.partitionStart = parseInt(start);
+      result.partitionEnd = parseInt(end);
+    }
+  });
+  if (result.hasOwnProperty("partitionKey")) {
+    return result;
+  } else {
+    throw new Error("partition not found");
+  }
+}
+
+export function checkMapFidelity(reference, map) {
+  const chars = reference.split("");
+  try {
+    chars.forEach((c, i) => {
+      if (map[i].c !== c) {
+        throw new Error(
+          `mapping error at index ${i}, char ${c}, in context ${reference.substring(
+            i - 5,
+            i + 5
+          )}`
+        );
+      }
+    });
+    console.log("map OK");
+  } catch (error) {
+    console.log(error);
+  }
 }

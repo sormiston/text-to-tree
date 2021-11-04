@@ -1,6 +1,12 @@
 // INIT
 import vkbeautify from "./node_modules/vkbeautify/index.js";
-import { correlationEngine, organizeMap } from "./correlationEngine.js";
+import {
+  correlationEngine,
+  getRangeMap,
+  getPartition,
+  organizeMap,
+  checkMapFidelity,
+} from "./correlationEngine.js";
 
 function scrubTags(str) {
   if (str === null || str === "") return false;
@@ -13,11 +19,7 @@ const OPEN_SPEAK_TAG = `<speak version="1.0" xmlns="http://www.w3.org/2001/10/sy
 const CLOSING_SPEAK_TAG = "</speak>";
 
 // REPRESENTS DATA FROM BACKEND, TEXT WITH SOME SSML DONE
-const ssml = `
-      No anúncio, Geraldo Rabello convida a família para falar
-      sobre
-      o empreendimento, menos <prosody pitch="low">Luiza, que estava no Canadá.</prosody> A frase logo se popularizou no Twitter e Facebook, tornando-se
-      rapidamente um dos assuntos mais comentados da primeira rede social.`;
+const ssml = `No anúncio, Geraldo Rabello convida a família para falar sobre o empreendimento, menos <prosody pitch="low">Luiza, que estava no Canadá.</prosody> A frase logo se popularizou no Twitter e Facebook, tornando-se rapidamente um dos assuntos mais comentados da primeira rede social.`;
 
 const textElt = document.querySelector("#fresh-plain-text");
 const outputElt = document.querySelector("#generated-ssml");
@@ -40,22 +42,62 @@ function printXMLString() {
 printXMLString();
 console.dir(ssmlDoc);
 
+// Some important LOCAL MEMORY INITS
+let logs = false;
+let lastTextSnapshot = textElt.textContent;
+let targetPartition;
+let targetXMLTextNode;
 // Can we successfully map between the de-tagged user text and the XML tree ?
-let logs = true;
-let mapState
 
 textElt.addEventListener("click", (e) => {
   const selectableTextIdx = getSelectableTextIdx();
-  getTextNodeInXMLDoc(textElt.innerText, selectableTextIdx);
+  const rangeMap = getRangeMap(
+    lastTextSnapshot,
+    ssmlDoc.firstElementChild
+  );
+  const { partitionKey, partitionStart, partitionEnd } = getPartition(
+    rangeMap,
+    selectableTextIdx
+  );
+  console.log("partitionKey", partitionKey);
+  const textNodeInXMLDoc = rangeMap[partitionKey];
+  console.log("textNodeInXMLDoc", textNodeInXMLDoc);
 });
-// ***************************
-function getSelectableTextIdx() {
+textElt.addEventListener("keydown", (e) => {
+  console.log(e);
+  antecipateMutation();
+});
+//  *******************************
+function antecipateMutation() {
+  // get cursor position before key input
   const sel = window.getSelection();
-  const { selectableTextIdx } = correlationEngine(textElt.innerText, textElt, {
+  let { selectableTextIdx } = correlationEngine(textElt.textContent, textElt, {
     tnode: sel.anchorNode,
     idx: sel.anchorOffset,
   });
-  return selectableTextIdx;
+
+  selectableTextIdx = selectableTextIdx || textElt.textContent.length - 1;
+  // get corresponding tnode in xml tree
+  const rangeMap = getRangeMap(textElt.textContent, ssmlDoc.firstElementChild);
+  const partition = getPartition(rangeMap, selectableTextIdx);
+  // console.log("partitionKey", partitionKey);
+  const textNodeInXMLDoc = rangeMap[partition.partitionKey];
+  // console.log("textNodeInXMLDoc");
+  // console.dir(textNodeInXMLDoc);
+
+  targetPartition = partition;
+  targetXMLTextNode = textNodeInXMLDoc;
+}
+// **************************
+
+// ***************************
+function getSelectableTextIdx(charDelt = 0) {
+  const sel = window.getSelection();
+  const { selectableTextIdx } = correlationEngine(lastTextSnapshot, textElt, {
+    tnode: sel.anchorNode,
+    idx: sel.anchorOffset + charDelt * -1,
+  });
+  return selectableTextIdx || lastTextSnapshot.length - 1;
 } // ************************
 
 // ****************************
@@ -71,11 +113,11 @@ function getTextNodeInXMLDoc(selectableText, indexInText) {
       value: tagNodeInDoc.tnode.textContent,
       node: tagNodeInDoc.tnode,
     });
-  mapState = correlationMap
-  console.log(correlationMap)
-  console.log(organizeMap(correlationMap))
+  checkMapFidelity(selectableText, correlationMap);
   return tagNodeInDoc.tnode;
 } // ****************************
+
+// ********************************
 
 function checkParity() {
   console.log(
@@ -89,17 +131,55 @@ function mutationCallback(mutationList, observer) {
   mutationList.forEach((mutation) => {
     switch (mutation.type) {
       case "characterData":
-        const newValue = mutation.target.textContent;
-         const { oldValue } = mutation;
-        // const charDelt =
-        //   Math.max(newValue.length, oldValue.length) -
-        //   Math.min(newValue.length, oldValue.length);
-        const selectableTextIdx = getSelectableTextIdx();
-        const textNodeInXMLDoc = getTextNodeInXMLDoc(oldValue, selectableTextIdx);
-        console.log(textNodeInXMLDoc)
-        // textNodeInXMLDoc.textContent = newValue;
-        // printXMLString();
-        // checkParity();
+        const newAggText = mutation.target.parentElement.innerText;
+        const charDelt = newAggText.length - lastTextSnapshot.length;
+        const newTextNodeValue = newAggText.substring(
+          targetPartition.partitionStart,
+          targetPartition.partitionEnd + charDelt + 1
+        );
+        targetXMLTextNode.textContent = newTextNodeValue;
+        lastTextSnapshot = newAggText;
+
+      printXMLString();
+      checkParity();
+
+      // const selectableTextIdx = getSelectableTextIdx(charDelt);
+      // const textNodeInXMLDoc = getTextNodeInXMLDoc(
+      //   lastTextSnapshot,
+      //   selectableTextIdx
+      // );
+
+      // const rangeMap = getRangeMap(
+      //   lastTextSnapshot,
+      //   ssmlDoc.firstElementChild
+      // );
+      // const { partitionKey, partitionStart, partitionEnd } = getPartition(
+      //   rangeMap,
+      //   selectableTextIdx
+      // );
+      // console.log("partitionKey", partitionKey);
+      // const textNodeInXMLDoc = rangeMap[partitionKey];
+      // console.log("textNodeInXMLDoc");
+      // console.dir(textNodeInXMLDoc);
+
+      // if the user-facing contenteditable has inline markup, this will need to bubble up to block level.  For now, we know the p[contenteditable] is direct parent of any its descendant child nodes
+
+      // const newTextValue = newAggText.substring(
+      //   partitionStart,
+      //   Math.min(partitionEnd + charDelt + 1, newAggText.length)
+      // );
+      // console.log("newTextValue");
+      // console.log(newTextValue);
+
+      // textNodeInXMLDoc.textContent = newTextValue;
+      // printXMLString();
+      // checkParity();
+
+      // lastTextSnapshot = textElt.textContent;
+
+      // textNodeInXMLDoc.textContent = newValue;
+      // printXMLString();
+      // checkParity();
     }
   });
 }
@@ -107,5 +187,4 @@ const observer = new MutationObserver(mutationCallback);
 observer.observe(textElt, {
   subtree: true,
   characterData: true,
-  characterDataOldValue: true,
 });
